@@ -14,11 +14,9 @@ import {
   Code
 } from 'lucide-react';
 
-// --- API CONFIGURATION ---
-// PUT YOUR GEMINI API KEY HERE BEFORE RUNNING
-const apiKey = ""; 
 
-// Helper for exponential backoff
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY; 
+
 const fetchWithRetry = async (url, options, retries = 5, delay = 1000) => {
   for (let i = 0; i < retries; i++) {
     try {
