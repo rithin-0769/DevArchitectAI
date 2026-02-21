@@ -14,9 +14,10 @@ import {
   Code
 } from 'lucide-react';
 
+// --- API CONFIGURATION ---
+const apiKey = ""; // Provided by the execution environment
 
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY; 
-
+// Helper for exponential backoff
 const fetchWithRetry = async (url, options, retries = 5, delay = 1000) => {
   for (let i = 0; i < retries; i++) {
     try {
@@ -39,10 +40,6 @@ export default function App() {
 
   const handleGenerate = async () => {
     if (!idea.trim()) return;
-    if (!apiKey) {
-      setError("Please add your Gemini API Key at the top of the App.jsx file.");
-      return;
-    }
     
     setIsLoading(true);
     setError('');
@@ -86,7 +83,7 @@ export default function App() {
 
     try {
       const result = await fetchWithRetry(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -101,7 +98,7 @@ export default function App() {
       setBlueprint(parsedBlueprint);
     } catch (err) {
       console.error(err);
-      setError('Failed to generate blueprint. Please check your API key or refine your idea.');
+      setError('Failed to generate blueprint. Please try again or refine your idea.');
     } finally {
       setIsLoading(false);
     }
@@ -109,20 +106,18 @@ export default function App() {
 
   const copyToClipboard = () => {
     if (blueprint?.folderStructure) {
-      navigator.clipboard.writeText(blueprint.folderStructure).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      }).catch(() => {
-        // Fallback
+      document.execCommand('copy');
+      navigator.clipboard.writeText(blueprint.folderStructure).catch(() => {
+        // Fallback for older browsers / iframes
         const textArea = document.createElement("textarea");
         textArea.value = blueprint.folderStructure;
         document.body.appendChild(textArea);
         textArea.select();
         document.execCommand("Copy");
         textArea.remove();
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
       });
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
   };
 
@@ -151,7 +146,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content Area */}
+      {/* Main Content Area (flex-grow pushes footer to bottom) */}
       <main className="flex-grow max-w-5xl w-full mx-auto px-6 mt-12 mb-20 space-y-12">
         {/* Input Section */}
         <section className="bg-white p-8 md:p-12 rounded-2xl shadow-sm border border-slate-200">
@@ -210,6 +205,7 @@ export default function App() {
                   {blueprint.description}
                 </p>
               </div>
+              {/* Decorative background element */}
               <div className="absolute -right-10 -top-10 opacity-10 pointer-events-none">
                 <Layers className="w-64 h-64" />
               </div>
@@ -328,6 +324,8 @@ export default function App() {
             <a 
               href="#" 
               className="font-bold text-slate-800 hover:text-blue-600 transition-colors"
+              target="_blank"
+              rel="noopener noreferrer"
             >
               Rithin Ravoori
             </a>
@@ -336,4 +334,4 @@ export default function App() {
       </footer>
     </div>
   );
-}
+                    }
