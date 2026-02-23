@@ -1,23 +1,11 @@
 import React, { useState } from 'react';
 import { 
-  Wand2, 
-  Loader2, 
-  Layers, 
-  FolderTree, 
-  Rocket, 
-  AlertCircle, 
-  CheckCircle2, 
-  Copy,
-  Server,
-  Layout,
-  Database,
-  Code
+  Wand2, Loader2, Layers, FolderTree, Rocket, AlertCircle, 
+  CheckCircle2, Copy, Server, Layout, Database, Code
 } from 'lucide-react';
 
-// API Key configuration
-// In this environment, initialize with an empty string.
-// For local development, manually paste your key here or use your build tool's env logic.
-const apiKey = "";
+// This grabs the key from your local .env file or Vercel settings
+const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
 
 const fetchWithRetry = async (url, options, retries = 3, delay = 1000) => {
   for (let i = 0; i < retries; i++) {
@@ -46,7 +34,7 @@ export default function App() {
     if (!idea.trim()) return;
     
     if (!apiKey) {
-      setError("OpenAI API Key is missing. Please provide your API key in the source code to proceed.");
+      setError("OpenAI API Key is missing. Please check your .env file or Vercel Environment Variables.");
       return;
     }
 
@@ -82,6 +70,7 @@ export default function App() {
     `;
 
     try {
+      // Connect to OpenAI API instead of Google
       const data = await fetchWithRetry(
         'https://api.openai.com/v1/chat/completions',
         {
@@ -116,22 +105,10 @@ export default function App() {
 
   const copyToClipboard = () => {
     if (blueprint?.folderStructure) {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(blueprint.folderStructure).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 2000);
-        });
-      } else {
-        // Fallback for environments where navigator.clipboard is unavailable
-        const textArea = document.createElement("textarea");
-        textArea.value = blueprint.folderStructure;
-        document.body.appendChild(textArea);
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
+      navigator.clipboard.writeText(blueprint.folderStructure).then(() => {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
-      }
+      });
     }
   };
 
@@ -224,7 +201,7 @@ export default function App() {
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
                   <div className="flex items-center gap-2 mb-6">
                     <Layers className="w-6 h-6 text-slate-500" />
-                    <h3 className="text-xl font-bold text-slate-800">Tech Stack</h3>
+                    <h3 className="text-xl font-bold">Tech Stack</h3>
                   </div>
                   <div className="space-y-4">
                     {blueprint.techStack?.map((tech, idx) => (
@@ -264,7 +241,7 @@ export default function App() {
                 <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-200 h-full">
                   <div className="flex items-center gap-3 mb-8 border-b border-slate-100 pb-4">
                     <Rocket className="w-7 h-7 text-emerald-500" />
-                    <h3 className="text-2xl font-bold text-slate-800">Implementation Plan</h3>
+                    <h3 className="text-2xl font-bold">Implementation Plan</h3>
                   </div>
                   
                   <div className="space-y-6 relative">
@@ -298,18 +275,6 @@ export default function App() {
           </section>
         )}
       </main>
-
-      <footer className="bg-white border-t border-slate-200 py-8 mt-auto">
-        <div className="max-w-5xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4 text-slate-500 text-sm">
-          <div className="flex items-center gap-2 font-medium">
-            <Layers className="w-5 h-5 text-emerald-500" />
-            <span>DevArchitectAI (OpenAI Ed.)</span>
-          </div>
-          <div>
-            Developed by <span className="font-bold text-slate-800">Rithin Ravoori</span>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }
