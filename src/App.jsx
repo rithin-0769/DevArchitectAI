@@ -18,7 +18,7 @@ import {
 
 /**
  * DevArchitectAI - Architecture Engine
- * This version includes enhanced network diagnostics for 'Failed to fetch' errors.
+ * Fixed: Updated Gemini endpoint to stable v1 and improved error handling.
  */
 
 // Safe environment variable access
@@ -26,11 +26,15 @@ const getApiKey = () => {
   try {
     // Check OpenAI Key first
     const openAI = import.meta.env.VITE_OPENAI_API_KEY;
-    if (openAI && openAI !== "your-actual-openai-key-here") return { key: openAI, type: 'openai' };
+    if (openAI && openAI !== "your-actual-openai-key-here" && openAI.trim() !== "") {
+      return { key: openAI, type: 'openai' };
+    }
     
     // Fallback to Gemini Key
     const gemini = import.meta.env.VITE_GEMINI_API_KEY;
-    if (gemini && gemini !== "your_actual_api_key_here") return { key: gemini, type: 'gemini' };
+    if (gemini && gemini !== "your_actual_api_key_here" && gemini.trim() !== "") {
+      return { key: gemini, type: 'gemini' };
+    }
     
     return { key: "", type: 'none' };
   } catch (e) {
@@ -45,10 +49,11 @@ const fetchWithRetry = async (url, options, retries = 3) => {
   for (let i = 0; i < retries; i++) {
     try {
       const response = await fetch(url, options);
-      if (response.ok) return await response.json();
+      const data = await response.json();
       
-      const errorData = await response.json();
-      throw new Error(errorData.error?.message || `HTTP ${response.status}`);
+      if (response.ok) return data;
+      
+      throw new Error(data.error?.message || `HTTP ${response.status}`);
     } catch (error) {
       lastError = error;
       // If it's a network error (Failed to fetch), it's likely CORS or Adblock
@@ -74,7 +79,7 @@ export default function App() {
     if (config.type === 'none') {
       setError({
         title: "API Key Missing",
-        message: "We couldn't find an API key in your .env file. Please add VITE_OPENAI_API_KEY or VITE_GEMINI_API_KEY and restart your terminal (npm run dev)."
+        message: "We couldn't find a valid API key. Please ensure VITE_OPENAI_API_KEY or VITE_GEMINI_API_KEY is correctly set in your .env file and RESTART your terminal (npm run dev)."
       });
       return;
     }
@@ -86,9 +91,9 @@ export default function App() {
     const systemPrompt = `You are a Principal Software Architect. Design a production-ready MVP blueprint. Return ONLY a valid JSON object matching the requested schema.`;
 
     try {
-      let data;
+      let resultData;
       if (config.type === 'openai') {
-        data = await fetchWithRetry('https://api.openai.com/v1/chat/completions', {
+        resultData = await fetchWithRetry('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json',
@@ -103,29 +108,36 @@ export default function App() {
             response_format: { type: "json_object" }
           })
         });
-        setBlueprint(JSON.parse(data.choices[0].message.content));
+        setBlueprint(JSON.parse(resultData.choices[0].message.content));
       } else {
-        // Gemini implementation
-        data = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${config.key}`, {
+        // FIXED: Using stable v1 endpoint for gemini-1.5-flash
+        resultData = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${config.key}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{ parts: [{ text: idea }] }],
             systemInstruction: { parts: [{ text: systemPrompt }] },
-            generationConfig: { responseMimeType: "application/json" }
+            generationConfig: { 
+              responseMimeType: "application/json",
+              temperature: 0.7
+            }
           })
         });
-        setBlueprint(JSON.parse(data.candidates[0].content.parts[0].text));
+        
+        const rawText = resultData.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!rawText) throw new Error("The AI returned an empty response.");
+        setBlueprint(JSON.parse(rawText));
       }
     } catch (err) {
+      console.error("Architecture Error:", err);
       if (err.message === "NETWORK_BLOCK") {
         setError({
           title: "Connection Blocked",
-          message: "The browser failed to reach the AI server. 1. Disable Ad-blockers for this site. 2. If using OpenAI, try switching to Gemini in your .env as OpenAI often blocks direct browser requests (CORS)."
+          message: "The browser failed to reach the AI server. 1. Disable Ad-blockers for this site. 2. If using OpenAI, try switching back to Gemini in your .env as OpenAI often blocks direct browser requests (CORS)."
         });
       } else {
         setError({
-          title: "API Error",
+          title: "Architecture Generation Failed",
           message: err.message
         });
       }
@@ -253,7 +265,7 @@ export default function App() {
               <div className="lg:col-span-2">
                 <div className="bg-white p-8 md:p-10 rounded-3xl border border-slate-200 shadow-sm">
                   <h4 className="text-lg font-bold mb-8 flex items-center gap-2 text-slate-400 uppercase tracking-widest">
-                    <Rocket className="w-4 h-4" /> Implementation Plan
+                    < Rocket className="w-4 h-4" /> Implementation Plan
                   </h4>
                   <div className="space-y-6 relative">
                     <div className="absolute left-6 top-4 bottom-4 w-px bg-slate-100"></div>
