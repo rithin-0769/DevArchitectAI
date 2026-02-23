@@ -14,37 +14,25 @@ import {
   Code
 } from 'lucide-react';
 
-// API Key is managed by the execution environment.
-// For local development, you can manually set this or ensure your build tool 
-// supports the import.meta syntax.
-const apiKey = ""; 
+// API Key configuration
+// In this environment, initialize with an empty string.
+// For local development, manually paste your key here or use your build tool's env logic.
+const apiKey = "";
 
-/**
- * Implements exponential backoff for API calls.
- * Retries up to 5 times with delays of 1s, 2s, 4s, 8s, 16s.
- */
-const fetchWithRetry = async (url, options) => {
-  const delays = [1000, 2000, 4000, 8000, 16000];
-  let lastError;
-
-  for (let i = 0; i <= delays.length; i++) {
+const fetchWithRetry = async (url, options, retries = 3, delay = 1000) => {
+  for (let i = 0; i < retries; i++) {
     try {
       const response = await fetch(url, options);
-      if (response.ok) return await response.json();
-      
-      const errorData = await response.json();
-      throw new Error(errorData.error?.message || `HTTP error! status: ${response.status}`);
-    } catch (error) {
-      lastError = error;
-      // Do not retry on 403 or 400 as they are usually configuration/auth issues
-      if (error.message.includes("403") || error.message.includes("400")) throw error;
-      
-      if (i < delays.length) {
-        await new Promise(res => setTimeout(res, delays[i]));
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error?.message || `HTTP error! status: ${response.status}`);
       }
+      return await response.json();
+    } catch (error) {
+      if (i === retries - 1) throw error;
+      await new Promise(res => setTimeout(res, delay * Math.pow(2, i)));
     }
   }
-  throw lastError;
 };
 
 export default function App() {
@@ -57,6 +45,11 @@ export default function App() {
   const handleGenerate = async () => {
     if (!idea.trim()) return;
     
+    if (!apiKey) {
+      setError("OpenAI API Key is missing. Please provide your API key in the source code to proceed.");
+      return;
+    }
+
     setIsLoading(true);
     setError('');
     setBlueprint(null);
@@ -85,37 +78,37 @@ export default function App() {
           }
         ]
       }
-      
-      Ensure the phases are logical. Keep it focused on the MVP (Minimum Viable Product).
+      Ensure the output is valid JSON.
     `;
 
-    const payload = {
-      contents: [{ parts: [{ text: idea }] }],
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      generationConfig: {
-        responseMimeType: "application/json",
-      }
-    };
-
     try {
-      // Using the latest preview model for best architectural reasoning
-      const result = await fetchWithRetry(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
+      const data = await fetchWithRetry(
+        'https://api.openai.com/v1/chat/completions',
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            model: "gpt-4o",
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: `App Idea: ${idea}` }
+            ],
+            response_format: { type: "json_object" }
+          })
         }
       );
 
-      const rawText = result.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!rawText) throw new Error("No response generated from the AI.");
+      const rawContent = data.choices?.[0]?.message?.content;
+      if (!rawContent) throw new Error("OpenAI returned an empty response.");
 
-      const parsedBlueprint = JSON.parse(rawText);
+      const parsedBlueprint = JSON.parse(rawContent);
       setBlueprint(parsedBlueprint);
     } catch (err) {
       console.error(err);
-      setError(err.message || 'Failed to generate blueprint. Please try again or refine your idea.');
+      setError(err.message || 'Failed to generate blueprint. Please check your API key or network.');
     } finally {
       setIsLoading(false);
     }
@@ -123,20 +116,19 @@ export default function App() {
 
   const copyToClipboard = () => {
     if (blueprint?.folderStructure) {
-      const text = blueprint.folderStructure;
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(() => {
+        navigator.clipboard.writeText(blueprint.folderStructure).then(() => {
           setCopied(true);
           setTimeout(() => setCopied(false), 2000);
         });
       } else {
-        // Fallback for restricted environments
+        // Fallback for environments where navigator.clipboard is unavailable
         const textArea = document.createElement("textarea");
-        textArea.value = text;
+        textArea.value = blueprint.folderStructure;
         document.body.appendChild(textArea);
         textArea.select();
         document.execCommand('copy');
-        textArea.remove();
+        document.body.removeChild(textArea);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
       }
@@ -156,13 +148,13 @@ export default function App() {
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="bg-blue-600 p-2 rounded-lg text-white">
+            <div className="bg-emerald-600 p-2 rounded-lg text-white">
               <Layers className="w-6 h-6" />
             </div>
-            <h1 className="text-xl font-bold tracking-tight">DevArchitect<span className="text-blue-600">AI</span></h1>
+            <h1 className="text-xl font-bold tracking-tight">DevArchitect<span className="text-emerald-600">AI</span></h1>
           </div>
-          <div className="text-sm font-medium text-slate-500 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
-            Architect Suite
+          <div className="text-xs font-bold text-slate-400 border border-slate-200 px-2 py-1 rounded">
+            GPT-4o POWERED
           </div>
         </div>
       </header>
@@ -171,10 +163,10 @@ export default function App() {
         <section className="bg-white p-8 md:p-12 rounded-2xl shadow-sm border border-slate-200">
           <div className="text-center max-w-2xl mx-auto mb-10">
             <h2 className="text-3xl md:text-4xl font-extrabold text-slate-900 mb-4 tracking-tight">
-              From Idea to Architecture in <span className="text-blue-600">Seconds</span>
+              OpenAI Architectural <span className="text-emerald-600">Engine</span>
             </h2>
             <p className="text-slate-600 text-lg">
-              Describe your app idea. Our AI will generate a strict, production-ready blueprint including the tech stack, folder structure, and step-by-step phases.
+              Describe your app idea. We'll generate a production-ready blueprint using GPT-4o.
             </p>
           </div>
 
@@ -182,8 +174,8 @@ export default function App() {
             <textarea
               value={idea}
               onChange={(e) => setIdea(e.target.value)}
-              placeholder="E.g., Build a real-time collaborative code editor with React, Node.js, and WebSockets..."
-              className="w-full h-36 p-5 text-slate-800 bg-slate-50 border border-slate-300 rounded-xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 transition-all resize-none shadow-inner text-lg outline-none"
+              placeholder="Describe your vision (e.g., A fitness app with real-time tracking)..."
+              className="w-full h-36 p-5 text-slate-800 bg-slate-50 border border-slate-300 rounded-xl focus:ring-4 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all resize-none shadow-inner text-lg outline-none"
             />
             
             {error && (
@@ -201,12 +193,12 @@ export default function App() {
               {isLoading ? (
                 <>
                   <Loader2 className="w-6 h-6 animate-spin" />
-                  Generating Architecture...
+                  Reasoning with GPT-4o...
                 </>
               ) : (
                 <>
-                  <Wand2 className="w-6 h-6 text-blue-400" />
-                  Generate Blueprint
+                  <Wand2 className="w-6 h-6 text-emerald-400" />
+                  Generate Architecture
                 </>
               )}
             </button>
@@ -215,10 +207,10 @@ export default function App() {
 
         {blueprint && (
           <section className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-8 md:p-10 text-white shadow-lg relative overflow-hidden">
+            <div className="bg-gradient-to-br from-emerald-600 to-teal-700 rounded-2xl p-8 md:p-10 text-white shadow-lg relative overflow-hidden">
               <div className="relative z-10">
                 <h2 className="text-3xl md:text-4xl font-bold mb-3">{blueprint.title}</h2>
-                <p className="text-blue-100 text-lg leading-relaxed max-w-3xl">
+                <p className="text-emerald-50 text-lg leading-relaxed max-w-3xl">
                   {blueprint.description}
                 </p>
               </div>
@@ -232,11 +224,11 @@ export default function App() {
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
                   <div className="flex items-center gap-2 mb-6">
                     <Layers className="w-6 h-6 text-slate-500" />
-                    <h3 className="text-xl font-bold">Tech Stack</h3>
+                    <h3 className="text-xl font-bold text-slate-800">Tech Stack</h3>
                   </div>
                   <div className="space-y-4">
                     {blueprint.techStack?.map((tech, idx) => (
-                      <div key={idx} className="p-4 rounded-xl bg-slate-50 border border-slate-100 hover:border-blue-200 transition-colors">
+                      <div key={idx} className="p-4 rounded-xl bg-slate-50 border border-slate-100 hover:border-emerald-200 transition-colors">
                         <div className="flex items-center gap-3 mb-2">
                           {getCategoryIcon(tech.category)}
                           <span className="font-semibold text-slate-900">{tech.name}</span>
@@ -252,17 +244,17 @@ export default function App() {
                 <div className="bg-slate-900 p-6 rounded-2xl shadow-lg border border-slate-800">
                   <div className="flex items-center justify-between mb-6">
                     <div className="flex items-center gap-2 text-slate-300">
-                      <FolderTree className="w-6 h-6 text-blue-400" />
+                      <FolderTree className="w-6 h-6 text-emerald-400" />
                       <h3 className="text-xl font-bold text-white">Structure</h3>
                     </div>
                     <button 
                       onClick={copyToClipboard}
                       className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
                     >
-                      {copied ? <CheckCircle2 className="w-5 h-5 text-green-400" /> : <Copy className="w-5 h-5" />}
+                      {copied ? <CheckCircle2 className="w-5 h-5 text-emerald-400" /> : <Copy className="w-5 h-5" />}
                     </button>
                   </div>
-                  <pre className="text-sm font-mono text-slate-300 overflow-x-auto whitespace-pre leading-relaxed bg-slate-950/50 p-4 rounded-lg border border-slate-800">
+                  <pre className="text-xs font-mono text-slate-300 overflow-x-auto whitespace-pre leading-relaxed bg-slate-950/50 p-4 rounded-lg border border-slate-800">
                     <code>{blueprint.folderStructure}</code>
                   </pre>
                 </div>
@@ -271,8 +263,8 @@ export default function App() {
               <div className="lg:col-span-2">
                 <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-200 h-full">
                   <div className="flex items-center gap-3 mb-8 border-b border-slate-100 pb-4">
-                    <Rocket className="w-7 h-7 text-indigo-500" />
-                    <h3 className="text-2xl font-bold">Implementation Plan</h3>
+                    <Rocket className="w-7 h-7 text-emerald-500" />
+                    <h3 className="text-2xl font-bold text-slate-800">Implementation Plan</h3>
                   </div>
                   
                   <div className="space-y-6 relative">
@@ -280,28 +272,18 @@ export default function App() {
 
                     {blueprint.phases?.map((phase, idx) => (
                       <div key={idx} className="relative flex flex-col sm:flex-row gap-4 sm:gap-6 group">
-                        <div className="hidden sm:flex z-10 w-12 h-12 rounded-full bg-indigo-50 border-4 border-white items-center justify-center font-bold text-indigo-600 shadow-sm shrink-0 mt-1">
+                        <div className="hidden sm:flex z-10 w-12 h-12 rounded-full bg-emerald-50 border-4 border-white items-center justify-center font-bold text-emerald-600 shadow-sm shrink-0 mt-1">
                           {phase.phase}
                         </div>
                         
-                        <div className="flex-1 bg-slate-50 rounded-xl p-5 sm:p-6 border border-slate-100 group-hover:border-indigo-200 transition-all hover:shadow-md">
-                          <div className="flex items-center gap-3 mb-4 sm:hidden">
-                            <span className="flex w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 items-center justify-center font-bold text-sm">
-                              {phase.phase}
-                            </span>
-                            <h4 className="text-lg font-bold text-slate-900">{phase.title}</h4>
-                          </div>
-                          
-                          <h4 className="hidden sm:block text-xl font-bold text-slate-900 mb-4">
-                            {phase.title}
+                        <div className="flex-1 bg-slate-50 rounded-xl p-5 sm:p-6 border border-slate-100 group-hover:border-emerald-200 transition-all hover:shadow-md">
+                          <h4 className="text-xl font-bold text-slate-900 mb-4">
+                            Phase {phase.phase}: {phase.title}
                           </h4>
-                          
                           <ul className="space-y-3">
                             {phase.tasks?.map((task, tIdx) => (
                               <li key={tIdx} className="flex items-start gap-3">
-                                <div className="mt-1 shrink-0">
-                                  <CheckCircle2 className="w-5 h-5 text-slate-400" />
-                                </div>
+                                <CheckCircle2 className="w-5 h-5 text-slate-400 shrink-0 mt-1" />
                                 <span className="text-slate-700 leading-relaxed text-lg">{task}</span>
                               </li>
                             ))}
@@ -318,14 +300,13 @@ export default function App() {
       </main>
 
       <footer className="bg-white border-t border-slate-200 py-8 mt-auto">
-        <div className="max-w-5xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4 text-slate-500 text-sm md:text-base">
+        <div className="max-w-5xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4 text-slate-500 text-sm">
           <div className="flex items-center gap-2 font-medium">
-            <Layers className="w-5 h-5 text-blue-500" />
-            <span>DevArchitectAI</span>
+            <Layers className="w-5 h-5 text-emerald-500" />
+            <span>DevArchitectAI (OpenAI Ed.)</span>
           </div>
           <div>
-            Built with <span className="text-red-500 mx-1">♥</span> by{' '}
-            <span className="font-bold text-slate-800">Rithin Ravoori</span>
+            Developed by <span className="font-bold text-slate-800">Rithin Ravoori</span>
           </div>
         </div>
       </footer>
