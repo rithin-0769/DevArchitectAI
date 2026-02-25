@@ -1,146 +1,111 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { 
-  Wand2, 
-  Loader2, 
-  Layers, 
-  FolderTree, 
-  Rocket, 
-  AlertCircle, 
-  CheckCircle2, 
-  Copy,
-  Server,
-  Layout,
-  Database,
-  Code,
-  ShieldAlert,
-  WifiOff
+  Wand2, Loader2, Layers, FolderTree, Rocket, AlertCircle, 
+  CheckCircle2, Copy, Server, Layout, Database, Code, Heart
 } from 'lucide-react';
 
 /**
- * DevArchitectAI - Architecture Engine
- * Fixed: Updated Gemini endpoint to stable v1 and improved error handling.
+ * DevArchitectAI - Dual Engine (OpenAI & Gemini)
+ * Automatically detects which key is available.
+ * * NOTE: For the preview environment, we use safe access to environment variables.
+ * Locally, you can restore:
+ * const openAIKey = import.meta.env.VITE_OPENAI_API_KEY;
+ * const geminiKey = import.meta.env.VITE_GEMINI_API_KEY;
  */
-
-// Safe environment variable access
-const getApiKey = () => {
+const getEnv = (key) => {
   try {
-    // Check OpenAI Key first
-    const openAI = import.meta.env.VITE_OPENAI_API_KEY;
-    if (openAI && openAI !== "your-actual-openai-key-here" && openAI.trim() !== "") {
-      return { key: openAI, type: 'openai' };
-    }
-    
-    // Fallback to Gemini Key
-    const gemini = import.meta.env.VITE_GEMINI_API_KEY;
-    if (gemini && gemini !== "your_actual_api_key_here" && gemini.trim() !== "") {
-      return { key: gemini, type: 'gemini' };
-    }
-    
-    return { key: "", type: 'none' };
+    return import.meta.env[key] || "";
   } catch (e) {
-    return { key: "", type: 'none' };
+    return "";
   }
 };
 
-const config = getApiKey();
+const openAIKey = getEnv('VITE_OPENAI_API_KEY');
+// For the preview environment, we prioritize the runtime-injected key if available
+const geminiKey = getEnv('VITE_GEMINI_API_KEY') || "";
 
-const fetchWithRetry = async (url, options, retries = 3) => {
-  let lastError;
+const fetchWithRetry = async (url, options, retries = 5, delay = 1000) => {
   for (let i = 0; i < retries; i++) {
     try {
       const response = await fetch(url, options);
       const data = await response.json();
-      
-      if (response.ok) return data;
-      
-      throw new Error(data.error?.message || `HTTP ${response.status}`);
-    } catch (error) {
-      lastError = error;
-      // If it's a network error (Failed to fetch), it's likely CORS or Adblock
-      if (error.message === "Failed to fetch") {
-        throw new Error("NETWORK_BLOCK");
+      if (!response.ok) {
+        throw new Error(data.error?.message || `HTTP error! status: ${response.status}`);
       }
-      if (i < retries - 1) await new Promise(res => setTimeout(res, 1000 * Math.pow(2, i)));
+      return data;
+    } catch (error) {
+      if (i === retries - 1) throw error;
+      await new Promise(res => setTimeout(res, delay * Math.pow(2, i)));
     }
   }
-  throw lastError;
 };
 
 export default function App() {
   const [idea, setIdea] = useState('');
   const [blueprint, setBlueprint] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+
+  // Determine active engine based on available keys
+  const activeEngine = openAIKey ? 'OpenAI' : (geminiKey || true) ? 'Gemini' : null;
 
   const handleGenerate = async () => {
     if (!idea.trim()) return;
     
-    if (config.type === 'none') {
-      setError({
-        title: "API Key Missing",
-        message: "We couldn't find a valid API key. Please ensure VITE_OPENAI_API_KEY or VITE_GEMINI_API_KEY is correctly set in your .env file and RESTART your terminal (npm run dev)."
-      });
-      return;
-    }
-
     setIsLoading(true);
-    setError(null);
+    setError('');
     setBlueprint(null);
 
-    const systemPrompt = `You are a Principal Software Architect. Design a production-ready MVP blueprint. Return ONLY a valid JSON object matching the requested schema.`;
+    const systemPrompt = `You are an expert Principal Software Engineer. Design a strict MVP blueprint. 
+    Return ONLY a valid JSON object with: title, description, techStack (array of {category, name, reason}), 
+    folderStructure (ASCII tree), and phases (array of {phase, title, tasks}).`;
 
     try {
-      let resultData;
-      if (config.type === 'openai') {
-        resultData = await fetchWithRetry('https://api.openai.com/v1/chat/completions', {
+      let rawText = "";
+      
+      // Attempt OpenAI if key is present
+      if (openAIKey) {
+        const data = await fetchWithRetry('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${config.key}`
+            'Authorization': `Bearer ${openAIKey}`
           },
           body: JSON.stringify({
             model: "gpt-4o",
             messages: [
               { role: "system", content: systemPrompt },
-              { role: "user", content: `App Idea: ${idea}\nReturn JSON with title, description, techStack, folderStructure, and phases.` }
+              { role: "user", content: `App Idea: ${idea}` }
             ],
             response_format: { type: "json_object" }
           })
         });
-        setBlueprint(JSON.parse(resultData.choices[0].message.content));
+        rawText = data.choices[0].message.content;
       } else {
-        // FIXED: Using stable v1 endpoint for gemini-1.5-flash
-        resultData = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${config.key}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: idea }] }],
-            systemInstruction: { parts: [{ text: systemPrompt }] },
-            generationConfig: { 
-              responseMimeType: "application/json",
-              temperature: 0.7
-            }
-          })
-        });
-        
-        const rawText = resultData.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!rawText) throw new Error("The AI returned an empty response.");
-        setBlueprint(JSON.parse(rawText));
+        // Default to Gemini (standard in this environment)
+        // Note: Using the model supported in the preview environment
+        const model = "gemini-2.5-flash-preview-09-2025";
+        const data = await fetchWithRetry(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: `App Idea: ${idea}` }] }],
+              systemInstruction: { parts: [{ text: systemPrompt }] },
+              generationConfig: { responseMimeType: "application/json", temperature: 0.7 }
+            })
+          }
+        );
+        rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
       }
+
+      if (!rawText) throw new Error("No response content received from the AI.");
+      setBlueprint(JSON.parse(rawText));
     } catch (err) {
-      console.error("Architecture Error:", err);
-      if (err.message === "NETWORK_BLOCK") {
-        setError({
-          title: "Connection Blocked",
-          message: "The browser failed to reach the AI server. 1. Disable Ad-blockers for this site. 2. If using OpenAI, try switching back to Gemini in your .env as OpenAI often blocks direct browser requests (CORS)."
-        });
-      } else {
-        setError({
-          title: "Architecture Generation Failed",
-          message: err.message
-        });
-      }
+      console.error(err);
+      setError(err.message || 'Generation failed. Please check your keys and network.');
     } finally {
       setIsLoading(false);
     }
@@ -148,10 +113,19 @@ export default function App() {
 
   const copyToClipboard = () => {
     if (blueprint?.folderStructure) {
-      navigator.clipboard.writeText(blueprint.folderStructure).then(() => {
+      // Manual fallback for copy in some iframe environments
+      const textArea = document.createElement("textarea");
+      textArea.value = blueprint.folderStructure;
+      document.body.appendChild(textArea);
+      textArea.select();
+      try {
+        document.execCommand('copy');
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
-      });
+      } catch (err) {
+        console.error('Fallback copy failed', err);
+      }
+      document.body.removeChild(textArea);
     }
   };
 
@@ -167,14 +141,11 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Layers className="text-emerald-600 w-6 h-6" />
-          <h1 className="text-xl font-bold tracking-tight">DevArchitect<span className="text-emerald-600">AI</span></h1>
+          <Layers className={`${openAIKey ? 'text-emerald-600' : 'text-blue-600'} w-6 h-6`} />
+          <h1 className="text-xl font-bold tracking-tight">DevArchitect<span className={openAIKey ? 'text-emerald-600' : 'text-blue-600'}>AI</span></h1>
         </div>
-        <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${config.type !== 'none' ? 'bg-green-500' : 'bg-red-500'}`}></span>
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-            {config.type === 'none' ? 'No Engine Found' : `${config.type} Powered`}
-          </span>
+        <div className="text-xs font-bold text-slate-400 border border-slate-200 px-3 py-1 rounded-full uppercase tracking-widest">
+          {activeEngine ? `${activeEngine} Mode` : 'Detecting Engine...'}
         </div>
       </header>
 
@@ -182,38 +153,35 @@ export default function App() {
         <section className="bg-white p-8 md:p-12 rounded-3xl shadow-sm border border-slate-200">
           <div className="text-center max-w-2xl mx-auto mb-10">
             <h2 className="text-3xl md:text-4xl font-extrabold text-slate-900 mb-4 tracking-tight">
-              Instant Software <span className="text-emerald-600">Blueprints</span>
+              Instant Architecture <span className={openAIKey ? 'text-emerald-600' : 'text-blue-600'}>Engine</span>
             </h2>
-            <p className="text-slate-600 text-lg">Describe your vision. We'll generate a production-ready technical architecture.</p>
+            <p className="text-slate-600 text-lg">Describe your vision. We'll generate a production-ready blueprint using {activeEngine || 'AI'}.</p>
           </div>
 
           <div className="space-y-4 max-w-3xl mx-auto">
             <textarea
               value={idea}
               onChange={(e) => setIdea(e.target.value)}
-              placeholder="e.g., A real-time marketplace for vintage watches built with Next.js and Supabase..."
-              className="w-full h-40 p-6 text-slate-800 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 transition-all outline-none text-lg resize-none"
+              placeholder="e.g., A real-time marketplace for vintage watches..."
+              className="w-full h-40 p-6 text-slate-800 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-slate-500/10 focus:border-slate-400 transition-all outline-none text-lg resize-none shadow-inner"
             />
             
             {error && (
-              <div className="flex items-start gap-3 bg-red-50 border border-red-100 p-5 rounded-2xl">
-                <ShieldAlert className="w-6 h-6 text-red-600 shrink-0" />
-                <div>
-                  <h4 className="font-bold text-red-900">{error.title}</h4>
-                  <p className="text-sm text-red-700 mt-1 leading-relaxed">{error.message}</p>
-                </div>
+              <div className="flex items-center gap-3 bg-red-50 border border-red-100 p-4 rounded-xl text-red-700 text-sm">
+                <AlertCircle className="w-5 h-5 shrink-0" />
+                <span>{error}</span>
               </div>
             )}
 
             <button
               onClick={handleGenerate}
               disabled={isLoading || !idea.trim()}
-              className="w-full bg-slate-900 text-white font-bold py-5 rounded-2xl hover:bg-slate-800 disabled:opacity-50 transition-all shadow-xl hover:shadow-emerald-500/10 flex items-center justify-center gap-3 text-lg"
+              className="w-full bg-slate-900 text-white font-bold py-5 rounded-2xl hover:bg-slate-800 disabled:opacity-50 transition-all shadow-xl flex items-center justify-center gap-3 text-lg"
             >
               {isLoading ? (
-                <><Loader2 className="w-6 h-6 animate-spin" /> Analyzing Architecture...</>
+                <><Loader2 className="w-6 h-6 animate-spin" /> Reasoning...</>
               ) : (
-                <><Wand2 className="w-6 h-6 text-emerald-400" /> Generate Blueprint</>
+                <><Wand2 className={`w-6 h-6 ${openAIKey ? 'text-emerald-400' : 'text-blue-400'}`} /> Generate Blueprint</>
               )}
             </button>
           </div>
@@ -221,57 +189,37 @@ export default function App() {
 
         {blueprint && (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
-            <div className="bg-gradient-to-br from-emerald-600 to-teal-700 rounded-3xl p-8 md:p-10 text-white shadow-2xl relative overflow-hidden">
-              <div className="relative z-10">
-                <h3 className="text-3xl font-bold mb-4">{blueprint.title}</h3>
-                <p className="text-emerald-50 text-xl leading-relaxed opacity-90">{blueprint.description}</p>
-              </div>
+            <div className={`bg-gradient-to-br ${openAIKey ? 'from-emerald-600 to-teal-700' : 'from-blue-600 to-indigo-700'} rounded-3xl p-8 md:p-10 text-white shadow-2xl relative overflow-hidden`}>
+              <h3 className="text-3xl font-bold mb-4">{blueprint.title}</h3>
+              <p className="text-white text-xl leading-relaxed opacity-90">{blueprint.description}</p>
               <Layers className="absolute -right-20 -bottom-20 w-80 h-80 opacity-10" />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               <div className="lg:col-span-1 space-y-8">
-                <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm">
-                  <h4 className="text-lg font-bold mb-6 flex items-center gap-2 text-slate-400 uppercase tracking-widest">
-                    <Database className="w-4 h-4" /> Tech Stack
-                  </h4>
+                <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm h-full">
+                  <h4 className="text-sm font-bold mb-6 text-slate-400 uppercase tracking-widest">Tech Stack</h4>
                   <div className="space-y-4">
                     {blueprint.techStack?.map((tech, i) => (
                       <div key={i} className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
                         <div className="flex items-center gap-3 mb-2 font-bold text-slate-900">
                           {getCategoryIcon(tech.category)} {tech.name}
                         </div>
-                        <p className="text-sm text-slate-500 leading-snug">{tech.reason}</p>
+                        <p className="text-xs text-slate-500 leading-snug">{tech.reason}</p>
                       </div>
                     ))}
                   </div>
                 </div>
-
-                <div className="bg-slate-900 p-8 rounded-3xl shadow-2xl">
-                  <div className="flex items-center justify-between mb-6">
-                    <h4 className="text-lg font-bold text-slate-400 flex items-center gap-2 uppercase tracking-widest">
-                      <FolderTree className="w-4 h-4" /> Structure
-                    </h4>
-                    <button onClick={copyToClipboard} className="p-2 hover:bg-slate-800 rounded-xl transition-colors">
-                      {copied ? <CheckCircle2 className="text-green-400" /> : <Copy className="text-slate-500" />}
-                    </button>
-                  </div>
-                  <pre className="text-xs font-mono text-emerald-400/80 overflow-x-auto whitespace-pre leading-relaxed">
-                    <code>{blueprint.folderStructure}</code>
-                  </pre>
-                </div>
               </div>
 
-              <div className="lg:col-span-2">
-                <div className="bg-white p-8 md:p-10 rounded-3xl border border-slate-200 shadow-sm">
-                  <h4 className="text-lg font-bold mb-8 flex items-center gap-2 text-slate-400 uppercase tracking-widest">
-                    < Rocket className="w-4 h-4" /> Implementation Plan
-                  </h4>
+              <div className="lg:col-span-2 space-y-8">
+                <div className="bg-white p-8 md:p-10 rounded-3xl border border-slate-200 shadow-sm h-full">
+                  <h4 className="text-sm font-bold mb-8 text-slate-400 uppercase tracking-widest">Implementation Plan</h4>
                   <div className="space-y-6 relative">
                     <div className="absolute left-6 top-4 bottom-4 w-px bg-slate-100"></div>
                     {blueprint.phases?.map((phase, i) => (
                       <div key={i} className="relative flex gap-8 group">
-                        <div className="w-12 h-12 rounded-full bg-emerald-50 border-4 border-white flex items-center justify-center font-bold text-emerald-600 shadow-sm z-10">
+                        <div className={`w-12 h-12 rounded-full border-4 border-white flex items-center justify-center font-bold shadow-sm z-10 shrink-0 ${openAIKey ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'}`}>
                           {phase.phase}
                         </div>
                         <div className="flex-1 pb-10">
@@ -279,7 +227,7 @@ export default function App() {
                           <ul className="space-y-3">
                             {phase.tasks?.map((t, j) => (
                               <li key={j} className="flex items-center gap-3 text-slate-600">
-                                <CheckCircle2 className="w-5 h-5 text-slate-300" /> {t}
+                                <CheckCircle2 className="w-4 h-4 text-slate-300 shrink-0" /> {t}
                               </li>
                             ))}
                           </ul>
@@ -290,9 +238,36 @@ export default function App() {
                 </div>
               </div>
             </div>
+
+            <div className="bg-slate-900 p-8 rounded-3xl shadow-2xl overflow-hidden border border-slate-800">
+              <div className="flex items-center justify-between mb-6">
+                <h4 className="text-sm font-bold text-slate-400 uppercase tracking-widest">ASCII Folder Structure</h4>
+                <button onClick={copyToClipboard} className="p-2 hover:bg-slate-800 rounded-xl transition-colors">
+                  {copied ? <CheckCircle2 className="text-green-400 w-5 h-5" /> : <Copy className="text-slate-500 w-5 h-5" />}
+                </button>
+              </div>
+              <pre className={`text-[11px] font-mono ${openAIKey ? 'text-emerald-400/80' : 'text-blue-400/80'} overflow-x-auto whitespace-pre leading-relaxed`}>
+                <code>{blueprint.folderStructure}</code>
+              </pre>
+            </div>
           </div>
         )}
       </main>
+
+      <footer className="bg-white border-t border-slate-200 py-8 mt-auto">
+        <div className="max-w-5xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4 text-slate-500 text-sm">
+          <div className="flex items-center gap-2 font-medium">
+            <Layers className={`w-5 h-5 ${openAIKey ? 'text-emerald-500' : 'text-blue-500'}`} />
+            <span>DevArchitectAI v1.0</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <span>Developed with</span>
+            <Heart className="w-4 h-4 text-red-500 fill-red-500" />
+            <span>by</span>
+            <span className="font-bold text-slate-800 ml-1 uppercase tracking-wide">Rithin Ravoori</span>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
